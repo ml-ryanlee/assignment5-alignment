@@ -10,6 +10,17 @@ All changes we make to the assignment code or PDF will be documented in this fil
 
 ### Fixed
 
+## [2.0.1] - 2026-06-03
+
+### Added
+- both: additional prompt files and writeup clarifications to clarify prompting
+- both: modal utils and shared volume with safety models and datasets
+
+### Changed
+
+### Fixed
+- both: updated alpaca eval command to work with new package versions; downloaded gpt4-turbo reference data
+
 ## [2.0.0] - 2026-05-20
 
 ### Added

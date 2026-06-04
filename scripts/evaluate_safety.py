@@ -6,7 +6,7 @@ Running:
 ```
 python scripts/evaluate_safety.py \
     --input-path <path_to_predictions.jsonl> \
-    --model-name-or-path "/home/shared/Meta-Llama-3-70B-Instruct" \
+    --model-name-or-path "/mnt/cs336-a5-supplement/models/Llama-3.3-70B-Instruct" \
     --num-gpus 2 \
     --output-path <path_to_write_output.jsonl>
 ```
