@@ -7,8 +7,8 @@ import torch
 from torch import Tensor
 from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
-
-
+from cs336_alignment.checkpoint import get_model_and_tokenizer
+from cs336_alignment.tokenize_prompt_and_input import tokenize_prompt_and_output
 
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
@@ -46,7 +46,8 @@ def run_tokenize_prompt_and_output(
                 with labels, with value 1 where the corresponding label token
                 is part of the response and 0 otherwise.
     """
-    raise NotImplementedError
+    return tokenize_prompt_and_output(prompt_strs,output_strs,tokenizer)
+    #raise NotImplementedError
 
 
 def run_get_response_log_probs(

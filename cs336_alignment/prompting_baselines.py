@@ -110,10 +110,10 @@ def main() -> None:
             print("\n",f"reward type: {reward_type}")
             print("\n",f"number of examples: {len(responses)}")
 
-            if reward_type == "correct_format_only":
-                print("\n Ten Format Correct Only Responses:\n",responses[:10])
-            if reward_type == "none_correct":
-                print("\n Ten Format None Correct Responses:\n",responses[:10])
+            # if reward_type == "correct_format_only":
+            #     print("\n Ten Format Correct Only Responses:\n",responses[:10])
+            # if reward_type == "none_correct":
+            #     print("\n Ten Format None Correct Responses:\n",responses[:10])
 
 if __name__ == "__main__":
     main()
