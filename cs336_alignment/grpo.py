@@ -130,3 +130,110 @@ def compute_group_normalized_rewards(
     # reshape into unrolled 1D vector
     advantages = rearrange(advantages, 'n_prompts_per_rollout_batch group_size -> (n_prompts_per_rollout_batch group_size)', group_size=group_size)
     return (advantages,metadata)
+
+def compute_policy_gradient_loss(
+    raw_rewards_or_advantages: torch.Tensor,
+    policy_log_probs: torch.Tensor,
+    importance_reweighting_method: Literal["none", "noclip", "grpo", "gspo"] = "none",
+    old_log_probs: torch.Tensor | None = None,
+    cliprange: float | None = None,
+    response_mask: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor]]:
+    """Compute the policy-gradient loss at every token, where
+    raw_rewards_or_advantages is either the raw reward or an
+    already-normalized advantage.
+
+    Args:
+        raw_rewards_or_advantages: torch.Tensor
+            Shape (batch_size,) or (batch_size, 1), scalar reward/advantage for
+            each rollout response.
+        policy_log_probs: torch.Tensor
+            Shape (batch_size, sequence_length), logprobs for each token.
+        importance_reweighting_method: Literal["none", "noclip", "grpo", "gspo"]
+            "none": no importance reweighting; "noclip": apply importance
+            reweighting without clipping; "grpo": do PPO/GRPO-style
+            token-level reweighting and clipping; "gspo": do GSPO-style
+            sequence-level reweighting and clipping.
+        old_log_probs: torch.Tensor | None
+            Required unless importance_reweighting_method = "none"; shape
+            (batch_size, sequence_length).
+        cliprange: float | None = None
+            Clip parameter epsilon, required when importance_reweighting_method
+            is "grpo" or "gspo".
+        response_mask: torch.Tensor | None = None
+            Optional shape (batch_size, sequence_length) mask over response
+            tokens. Required for GSPO implementations that average the
+            sequence-level log-ratio over response tokens only.
+
+    Returns:
+        tuple[torch.Tensor, dict[str, torch.Tensor]].
+            per_token_policy_gradient_loss
+                Shape (batch_size, sequence_length), the per-token
+                policy-gradient loss (to be aggregated across the batch and
+                sequence dimensions in the training loop).
+            metadata
+                Statistics from the underlying loss call, such as
+                clip-fraction components.
+    """
+    # 
+    if importance_reweighting_method != "none":
+        raise NotImplementedError
+
+    per_token_policy_gradient_loss = -policy_log_probs * raw_rewards_or_advantages # [b,seq] * [b,1] 
+    metadata = {
+        "clip_fraction":None # placeholder
+    }
+    return (per_token_policy_gradient_loss, metadata)
+
+def aggregate_loss_across_microbatch(
+    per_token_policy_gradient_loss: torch.Tensor,
+    mask: torch.Tensor,
+    loss_normalization: Literal["sequence", "constant"] = "sequence",
+    normalization_constant: int | None = None,
+) -> torch.Tensor:
+    """Aggregate the per-token policy-gradient loss according to the response
+    mask and loss-normalization strategy.
+
+    Args:
+        per_token_policy_gradient_loss: torch.Tensor
+            Shape (batch_size, sequence_length), the per-token policy-gradient
+            loss (to be aggregated across the batch and sequence dimensions in
+            the training loop).
+        mask
+            torch.Tensor of shape (batch_size, sequence_length) denoting which
+            positions should be included in the loss.
+        loss_normalization: Literal["sequence", "constant"] = "sequence"
+            "sequence": average loss over each sequence, then average over
+            sequences; "constant": normalize total loss by a constant.
+        normalization_constant: int | None = None
+            The constant to divide total loss by; required if
+            loss_normalization = "constant".
+
+    Returns:
+        loss: torch.Tensor
+            A scalar containing the average loss. Make sure you can later call
+            backward on this loss.
+    """
+    loss = per_token_policy_gradient_loss
+
+    # apply the mask
+    loss = loss * mask
+
+    # step 1, count the ones in the mask for seq normalization
+    if loss_normalization == "sequence":
+        seq_lengths = torch.sum(mask,dim=-1,keepdim=True)
+        # average seq with unmasked lengths
+        loss = loss / seq_lengths
+
+    elif loss_normalization == "constant":
+        assert normalization_constant is not None, "Error: if using constant normalization, normalization_constant cannot be None"
+        # average seq with a constant
+        loss = loss / normalization_constant
+
+    else: 
+        raise NotImplementedError(f"Unknown loss_normalization: {loss_normalization}")
+
+    # Average across batch
+    loss = torch.sum(loss,dim=-1) # sum over rows (since token scalar values were individually averaged)
+    loss = torch.mean(loss) # get average across rows
+    return loss

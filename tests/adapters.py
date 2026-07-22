@@ -9,8 +9,8 @@ from torch.utils.data import Dataset
 from transformers import PreTrainedTokenizerBase
 from cs336_alignment.checkpoint import get_model_and_tokenizer
 from cs336_alignment.grpo_helpers import tokenize_prompt_and_output, get_response_log_probs
-from cs336_alignment.grpo import compute_rollout_rewards, compute_group_normalized_rewards
-
+from cs336_alignment.grpo import compute_rollout_rewards, compute_group_normalized_rewards 
+from cs336_alignment.grpo import compute_policy_gradient_loss, aggregate_loss_across_microbatch
 def run_tokenize_prompt_and_output(
     prompt_strs: list[str],
     output_strs: list[str],
@@ -204,7 +204,7 @@ def run_compute_policy_gradient_loss(
                 Statistics from the underlying loss call, such as
                 clip-fraction components.
     """
-    raise NotImplementedError
+    return compute_policy_gradient_loss(raw_rewards_or_advantages,policy_log_probs,importance_reweighting_method,old_log_probs,cliprange,response_mask)
 
 
 def run_aggregate_loss_across_microbatch(
@@ -236,7 +236,7 @@ def run_aggregate_loss_across_microbatch(
             A scalar containing the average loss. Make sure you can later call
             backward on this loss.
     """
-    raise NotImplementedError
+    return aggregate_loss_across_microbatch(per_token_policy_gradient_loss,mask,loss_normalization,normalization_constant)
 
 
 def run_grpo_train_step(
