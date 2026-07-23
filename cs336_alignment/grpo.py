@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Any, Callable, Literal
 from collections import defaultdict, Counter
 from einops import rearrange
-# from transformers import PreTrainedTokenizerBase
+from transformers import PreTrainedTokenizerBase
 # from cs336_alignment.checkpoint import get_model_and_tokenizer
 from torch.nn.functional import log_softmax
 
@@ -100,11 +100,11 @@ def compute_group_normalized_rewards(
 
     # rearrange raw_rewards from unrolled to 2D
     raw_rewards = rearrange(raw_rewards, '(n_prompts_per_rollout_batch group_size) -> n_prompts_per_rollout_batch group_size', group_size=group_size)
-    # print("Raw rewards shape:", raw_rewards.shape)
-    
+
+    # get mean per prompt, which means per group, our last feature dim
     mean_reward = raw_rewards.mean(dim=-1,keepdim=True) 
-    # print("Mean Reward shape:", mean_reward.shape)
-    
+
+    # get std per prompt, which means per group, our last feature dim.    
     std_reward = raw_rewards.std(dim=-1,keepdim=True)  
     # print("std reward shape: ", std_reward.shape)
 
@@ -237,3 +237,116 @@ def aggregate_loss_across_microbatch(
     loss = torch.sum(loss,dim=-1) # sum over rows (since token scalar values were individually averaged)
     loss = torch.mean(loss) # get average across rows
     return loss
+
+def grpo_train_step(
+    model: torch.nn.Module,
+    tokenizer: PreTrainedTokenizerBase,
+    optimizer: torch.optim.Optimizer,
+    gradient_accumulation_steps: int,
+    max_grad_norm: float | None,
+    reward_fn: Callable[[str, str], dict[str, float]],
+    repeated_prompts: list[str],
+    rollout_responses: list[str],
+    repeated_ground_truths: list[str],
+    group_size: int,
+    baseline: Literal["mean", "none"] = "mean",
+    advantage_eps: float = 1e-6,
+    advantage_normalizer: Literal["std", "none", "mean"] = "std",
+    importance_reweighting_method: Literal["none", "noclip", "grpo", "gspo"] = "none",
+    old_log_probs: torch.Tensor | None = None,
+    cliprange: float | None = None,
+    loss_normalization: Literal["sequence", "constant"] = "sequence",
+    normalization_constant: int | None = None,
+) -> tuple[torch.Tensor, dict[str, torch.Tensor | float]]:
+    """Execute forward-and-backward passes, with gradient_accumulation_steps
+    microbatches.
+
+    Args:
+        model: PreTrainedModel
+            HuggingFace model to train.
+        tokenizer: PreTrainedTokenizer
+            Tokenizer to use for tokenization.
+        optimizer: Optimizer
+            Optimizer for the model.
+        gradient_accumulation_steps: int
+            Number of microbatches per optimizer step.
+        max_grad_norm: float | None
+            If not None, clip the gradient norm to this value before calling
+            optimizer.step().
+        reward_fn: Callable[[str, str], dict[str, float]]
+            Scores the rollout responses against the ground truths, producing
+            a dict with keys "reward", "format_reward", and "answer_reward".
+        repeated_prompts: list[str]
+            The prompts for the examples. The length of this list is
+            rollout_batch_size, because the prompt for each example is repeated
+            group_size times.
+        rollout_responses: list[str]
+            Rollouts from the policy. The length of this list is
+            rollout_batch_size = n_prompts_per_rollout_batch * group_size.
+        repeated_ground_truths: list[str]
+            The ground truths for the examples. The length of this list is
+            rollout_batch_size, because the ground truth for each example is
+            repeated group_size times.
+        group_size: int
+            Number of responses per question (group).
+        baseline: Literal["mean", "none"]
+            If mean, subtract the per-group mean reward; if none, do nothing.
+        advantage_eps: float
+            Small constant to avoid division by zero in normalization.
+        advantage_normalizer: Literal["std", "none", "mean"]
+            If std, divide by the per-group standard deviation; if none, do
+            nothing; if mean, divide by the per-group mean reward.
+        importance_reweighting_method: Literal["none", "noclip", "grpo", "gspo"]
+            "none": no importance reweighting; "noclip": apply importance
+            reweighting without clipping; "grpo": do PPO/GRPO-style token-level
+            reweighting and clipping; "gspo": do GSPO-style sequence-level
+            reweighting and clipping.
+        old_log_probs: torch.Tensor | None
+            Required unless importance_reweighting_method = "none"; shape
+            (batch_size, sequence_length).
+        cliprange: float | None = None
+            Clip parameter epsilon, required when importance_reweighting_method
+            is "grpo" or "gspo".
+        loss_normalization: Literal["sequence", "constant"] = "sequence"
+            "sequence": average loss over each sequence, then average over
+            sequences; "constant": normalize total loss by a constant (fixed
+            for all of training).
+        normalization_constant: int | None = None
+            The constant to divide total loss by; required if
+            loss_normalization = "constant".
+
+    Returns:
+        tuple[torch.Tensor, dict[str, torch.Tensor]].
+            loss
+                scalar tensor. The batch loss, adjusted for gradient
+                accumulation. We return this so we can log it.
+            metadata
+                Dict with metadata from the underlying loss call, gradient norm
+                before clipping, and any other statistics you might want to log.
+    """
+    # get rewards
+    rollout_batch_size = len(rollout_responses)
+    raw_rewards, metadata = compute_rollout_rewards(reward_fn,rollout_responses,repeated_ground_truths)
+    
+
+
+    # gradient accumulation forward pass
+    microbatch_size = len(inputs)// gradient_accumulation_steps
+    for i in range(0, len(inputs), microbatch_size):
+        inputs_microbatch = inputs[i:i+microbatch_size]
+        labels_microbatch = labels[i:i+microbatch_size]
+
+        # forward pass
+        #logits = model(inputs_microbatch)
+
+        # process rollouts
+        loss = loss_fn(logits,labels_microbatch) * (len(inputs_microbatch)/ len(inputs))
+
+        # backward pass
+        loss.backward()
+
+    #how to clip gradient before optimizer step?
+
+    optimizer.step()
+
+    optimizer.zero_grad()
